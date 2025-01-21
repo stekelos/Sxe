@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Διάγραμμα Σχέσεων</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 20px auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        textarea, button {
+            width: 100%;
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        #chart {
+            margin-top: 20px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Διάγραμμα Σχέσεων Ανθρώπων</h1>
+        <p>Εισάγετε σχέσεις με τη μορφή: <strong>όνομα1,όνομα2</strong> (μία σχέση ανά γραμμή).</p>
+        <textarea id="inputData" rows="8" placeholder="π.χ. Άννα,Βασίλης\nΒασίλης,Κατερίνα"></textarea>
+        <button id="generateGraph">Δημιουργία Γραφήματος</button>
+        <div id="chart" style="width: 100%; height: 500px;"></div>
+    </div>
+
+    <script>
+        document.getElementById('generateGraph').addEventListener('click', function() {
+            const input = document.getElementById('inputData').value.trim();
+            if (!input) {
+                alert('Παρακαλώ εισάγετε δεδομένα!');
+                return;
+            }
+
+            const lines = input.split('\n');
+            const nodes = new Set();
+            const links = [];
+
+            lines.forEach(line => {
+                const [source, target] = line.split(',').map(s => s.trim());
+                if (source && target) {
+                    nodes.add(source);
+                    nodes.add(target);
+                    links.push({ source, target });
+                }
+            });
+
+            const nodeArray = Array.from(nodes).map(name => ({ id: name }));
+
+            // Καθαρισμός του παλιού γραφήματος
+            document.getElementById('chart').innerHTML = '';
+
+            // Δημιουργία του SVG
+            const width = document.getElementById('chart').clientWidth;
+            const height = document.getElementById('chart').clientHeight;
+
+            const svg = d3.select('#chart')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            const simulation = d3.forceSimulation(nodeArray)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2));
+
+            const link = svg.append('g')
+                .attr('stroke', '#ccc')
+                .attr('stroke-width', 2)
+                .selectAll('line')
+                .data(links)
+                .enter().append('line');
+
+            const node = svg.append('g')
+                .attr('stroke', '#fff')
+                .attr('stroke-width', 1.5)
+                .selectAll('circle')
+                .data(nodeArray)
+                .enter().append('circle')
+                .attr('r', 10)
+                .attr('fill', '#69b3a2')
+                .call(drag(simulation));
+
+            const label = svg.append('g')
+                .selectAll('text')
+                .data(nodeArray)
+                .enter().append('text')
+                .text(d => d.id)
+                .attr('font-size', 12)
+                .attr('dy', 4)
+                .attr('dx', 12);
+
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node
+                    .attr('cx', d => d.x)
+                    .attr('cy', d => d.y);
+
+                label
+                    .attr('x', d => d.x)
+                    .attr('y', d => d.y);
+            });
+
+            function drag(simulation) {
+                return d3.drag()
+                    .on('start', event => {
+                        if (!event.active) simulation.alphaTarget(0.3).restart();
+                        event.subject.fx = event.subject.x;
+                        event.subject.fy = event.subject.y;
+                    })
+                    .on('drag', event => {
+                        event.subject.fx = event.x;
+                        event.subject.fy = event.y;
+                    })
+                    .on('end', event => {
+                        if (!event.active) simulation.alphaTarget(0);
+                        event.subject.fx = null;
+                        event.subject.fy = null;
+                    });
+            }
+        });
+    </script>
+</body>
+</html>
