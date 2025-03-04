@@ -3,152 +3,198 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Διάγραμμα Σχέσεων</title>
-    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <title>Network Analyzer</title>
+    <script src="https://visjs.github.io/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
-            margin: 0;
-            padding: 0;
-        }
-        .container {
-            max-width: 800px;
-            margin: 20px auto;
-            background: #fff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        }
-        h1 {
+            margin: 20px;
             text-align: center;
-            color: #333;
         }
-        textarea, button {
-            width: 100%;
-            margin: 10px 0;
+        #inputData {
+            width: 400px;
+            height: 150px;
             padding: 10px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
+            margin: 10px;
+            font-size: 16px;
         }
-        #chart {
+        #submitBtn {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #mynetwork {
+            width: 100%;
+            height: 600px;
+            border: 1px solid lightgray;
             margin-top: 20px;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            overflow: hidden;
-            background: #fff;
+        }
+        #output {
+            margin-top: 20px;
+            font-size: 16px;
+            text-align: left;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Διάγραμμα Σχέσεων Ανθρώπων</h1>
-        <p>Εισάγετε σχέσεις με τη μορφή: <strong>όνομα1,όνομα2</strong> (μία σχέση ανά γραμμή).</p>
-        <textarea id="inputData" rows="8" placeholder="π.χ. Άννα,Βασίλης\nΒασίλης,Κατερίνα"></textarea>
-        <button id="generateGraph">Δημιουργία Γραφήματος</button>
-        <div id="chart" style="width: 100%; height: 500px;"></div>
-    </div>
+    <h1>Network Analyzer</h1>
+    <textarea id="inputData" placeholder="Εισάγετε δεδομένα σχέσεων (π.χ. ΚΑΤΕΡΙΝΑ,ΣΤΕΦΑΝΟΣ,ΦΙΛΟΙ,1.0)"></textarea><br>
+    <button id="submitBtn">Ανάλυση & Οπτικοποίηση</button>
+    <div id="mynetwork"></div>
+    <div id="output"></div>
 
     <script>
-        document.getElementById('generateGraph').addEventListener('click', function() {
-            const input = document.getElementById('inputData').value.trim();
-            if (!input) {
-                alert('Παρακαλώ εισάγετε δεδομένα!');
-                return;
+        const inputData = document.getElementById('inputData');
+        const submitBtn = document.getElementById('submitBtn');
+        const output = document.getElementById('output');
+        let nodes = new vis.DataSet([]);
+        let edges = new vis.DataSet([]);
+        let network;
+
+        submitBtn.addEventListener('click', function() {
+            const data = inputData.value.trim();
+            if (data) {
+                processNetwork(data);
+            } else {
+                output.textContent = "Παρακαλώ εισάγετε δεδομένα!";
             }
+        });
 
-            const lines = input.split('\n');
-            const nodes = new Set();
-            const links = [];
-
-            lines.forEach(line => {
-                const [source, target] = line.split(',').map(s => s.trim());
-                if (source && target) {
-                    nodes.add(source);
-                    nodes.add(target);
-                    links.push({ source, target });
+        function processNetwork(data) {
+            nodes.clear();
+            edges.clear();
+            const nodeMap = new Map();
+            const relationships = data.split('\n').map(line => line.split(',').map(part => part.trim()));
+            
+            // Προσθήκη κόμβων και ακμών
+            relationships.forEach(([from, to, type, weight], index) => {
+                if (from && to && weight) {
+                    if (!nodeMap.has(from)) {
+                        nodeMap.set(from, nodes.length);
+                        nodes.add({ id: nodeMap.get(from), label: from, group: 0 });
+                    }
+                    if (!nodeMap.has(to)) {
+                        nodeMap.set(to, nodes.length);
+                        nodes.add({ id: nodeMap.get(to), label: to, group: 0 });
+                    }
+                    edges.add({
+                        from: nodeMap.get(from),
+                        to: nodeMap.get(to),
+                        label: `${type} (${parseFloat(weight).toFixed(2)})`,
+                        width: parseFloat(weight) * 3
+                    });
                 }
             });
 
-            const nodeArray = Array.from(nodes).map(name => ({ id: name }));
+            // Απλή ανίχνευση κοινοτήτων (βασισμένη σε συνδεσιμότητα)
+            const communities = detectCommunities(nodeMap, edges);
+            nodes.update(communities);
 
-            // Καθαρισμός του παλιού γραφήματος
-            document.getElementById('chart').innerHTML = '';
+            // Οπτικοποίηση
+            const container = document.getElementById('mynetwork');
+            const networkData = { nodes: nodes, edges: edges };
+            const options = {
+                nodes: { shape: 'dot', size: 20, font: { size: 16, face: 'Arial' } },
+                edges: { font: { size: 12 }, color: 'gray' },
+                physics: { forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01 } },
+                layout: { improvedLayout: true }
+            };
+            network = new vis.Network(container, networkData, options);
 
-            // Δημιουργία του SVG
-            const width = document.getElementById('chart').clientWidth;
-            const height = document.getElementById('chart').clientHeight;
+            // Ανάλυση και προτάσεις
+            analyzeNetwork(nodeMap, edges);
+        }
 
-            const svg = d3.select('#chart')
-                .append('svg')
-                .attr('width', width)
-                .attr('height', height);
+        function detectCommunities(nodeMap, edges) {
+            const communityMap = new Map();
+            let group = 0;
+            const visited = new Set();
 
-            const simulation = d3.forceSimulation(nodeArray)
-                .force('link', d3.forceLink(links).id(d => d.id).distance(100))
-                .force('charge', d3.forceManyBody().strength(-300))
-                .force('center', d3.forceCenter(width / 2, height / 2));
-
-            const link = svg.append('g')
-                .attr('stroke', '#ccc')
-                .attr('stroke-width', 2)
-                .selectAll('line')
-                .data(links)
-                .enter().append('line');
-
-            const node = svg.append('g')
-                .attr('stroke', '#fff')
-                .attr('stroke-width', 1.5)
-                .selectAll('circle')
-                .data(nodeArray)
-                .enter().append('circle')
-                .attr('r', 10)
-                .attr('fill', '#69b3a2')
-                .call(drag(simulation));
-
-            const label = svg.append('g')
-                .selectAll('text')
-                .data(nodeArray)
-                .enter().append('text')
-                .text(d => d.id)
-                .attr('font-size', 12)
-                .attr('dy', 4)
-                .attr('dx', 12);
-
-            simulation.on('tick', () => {
-                link
-                    .attr('x1', d => d.source.x)
-                    .attr('y1', d => d.source.y)
-                    .attr('x2', d => d.target.x)
-                    .attr('y2', d => d.target.y);
-
-                node
-                    .attr('cx', d => d.x)
-                    .attr('cy', d => d.y);
-
-                label
-                    .attr('x', d => d.x)
-                    .attr('y', d => d.y);
+            edges.forEach(edge => {
+                const from = edge.from;
+                const to = edge.to;
+                if (!visited.has(from) && !visited.has(to)) {
+                    group++;
+                    visited.add(from);
+                    visited.add(to);
+                    communityMap.set(from, group);
+                    communityMap.set(to, group);
+                } else if (visited.has(from)) {
+                    communityMap.set(to, communityMap.get(from));
+                    visited.add(to);
+                } else if (visited.has(to)) {
+                    communityMap.set(from, communityMap.get(to));
+                    visited.add(from);
+                }
             });
 
-            function drag(simulation) {
-                return d3.drag()
-                    .on('start', event => {
-                        if (!event.active) simulation.alphaTarget(0.3).restart();
-                        event.subject.fx = event.subject.x;
-                        event.subject.fy = event.subject.y;
-                    })
-                    .on('drag', event => {
-                        event.subject.fx = event.x;
-                        event.subject.fy = event.y;
-                    })
-                    .on('end', event => {
-                        if (!event.active) simulation.alphaTarget(0);
-                        event.subject.fx = null;
-                        event.subject.fy = null;
-                    });
-            }
-        });
+            return nodes.get().map(node => ({
+                id: node.id,
+                group: communityMap.get(node.id) || 0
+            }));
+        }
+
+        function analyzeNetwork(nodeMap, edges) {
+            const nodeCount = nodes.length;
+            const edgeCount = edges.length;
+            const degreeCentrality = new Map();
+            edges.forEach(edge => {
+                degreeCentrality.set(edge.from, (degreeCentrality.get(edge.from) || 0) + 1);
+                degreeCentrality.set(edge.to, (degreeCentrality.get(edge.to) || 0) + 1);
+            });
+
+            const density = (2 * edgeCount) / (nodeCount * (nodeCount - 1));
+            const topNodes = Array.from(degreeCentrality.entries())
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([id, degree]) => `${nodes.get(id).label}: ${degree}`);
+
+            // Υπολογισμός προτάσεων φιλίας (απλοποιημένη εκδοχή του Jaccard)
+            const suggestions = suggestFriends(nodeMap, edges);
+
+            output.innerHTML = `
+                <h3>Ανάλυση Δικτύου</h3>
+                Κόμβοι: ${nodeCount}<br>
+                Συνδέσεις: ${edgeCount}<br>
+                Πυκνότητα: ${density.toFixed(4)}<br>
+                <h3>Οι 5 Πιο Δημοφιλείς Κόμβοι</h3>
+                ${topNodes.join('<br>')}<br>
+                <h3>Προτεινόμενες Νέες Φιλίες</h3>
+                ${suggestions.join('<br>')}
+            `;
+        }
+
+        function suggestFriends(nodeMap, edges) {
+            const neighbors = new Map();
+            edges.forEach(edge => {
+                if (!neighbors.has(edge.from)) neighbors.set(edge.from, new Set());
+                if (!neighbors.has(edge.to)) neighbors.set(edge.to, new Set());
+                neighbors.get(edge.from).add(edge.to);
+                neighbors.get(edge.to).add(edge.from);
+            });
+
+            const suggestions = [];
+            nodes.forEach(node1 => {
+                nodes.forEach(node2 => {
+                    if (node1.id !== node2.id && !neighbors.get(node1.id)?.has(node2.id)) {
+                        const common = intersection(neighbors.get(node1.id) || new Set(), neighbors.get(node2.id) || new Set());
+                        if (common.size > 0) {
+                            suggestions.push(`${node1.label}, ${node2.label}, ΦΙΛΟΙ, ${(common.size / 2).toFixed(2)}`);
+                        }
+                    }
+                });
+            });
+            return suggestions.sort((a, b) => b.split(',')[3] - a.split(',')[3]).slice(0, 5);
+        }
+
+        function intersection(setA, setB) {
+            const result = new Set();
+            setA.forEach(item => { if (setB.has(item)) result.add(item); });
+            return result;
+        }
     </script>
 </body>
 </html>
