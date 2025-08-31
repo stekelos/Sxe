@@ -5,28 +5,55 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Network Analyzer</title>
     <script src="https://visjs.github.io/vis-network/standalone/umd/vis-network.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; text-align: center; }
-        #inputData { width: 400px; height: 150px; padding: 10px; margin: 10px; font-size: 16px; }
-        #submitBtn { padding: 10px 20px; font-size: 16px; cursor: pointer; }
-        #mynetwork { width: 100%; height: 600px; border: 1px solid lightgray; margin-top: 20px; }
-        #output { margin-top: 20px; font-size: 16px; text-align: left; max-width: 1000px; margin-left: auto; margin-right: auto; }
-        canvas { margin-top: 30px; }
-        table { border-collapse: collapse; width: 100%; margin-top: 15px; font-size: 14px; }
-        th, td { border: 1px solid gray; padding: 6px 8px; text-align: center; }
-        th { background: #f0f0f0; }
-        .legend { margin-top: 15px; font-size: 14px; }
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            text-align: center;
+        }
+        #inputData {
+            width: 400px;
+            height: 150px;
+            padding: 10px;
+            margin: 10px;
+            font-size: 16px;
+        }
+        #submitBtn {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #mynetwork {
+            width: 100%;
+            height: 600px;
+            border: 1px solid lightgray;
+            margin-top: 20px;
+        }
+        #output {
+            margin-top: 20px;
+            font-size: 16px;
+            text-align: left;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.6;
+        }
+        .stat-section {
+            margin-bottom: 25px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 15px;
+        }
+        h3 {
+            color: #2a4d69;
+        }
     </style>
 </head>
 <body>
     <h1>Network Analyzer</h1>
-    <textarea id="inputData" placeholder="ΟΝΟΜΑ1,ΟΝΟΜΑ2,ΣΧΕΣΗ,ΒΑΡΟΣ"></textarea><br>
+    <textarea id="inputData" placeholder="Εισάγετε δεδομένα σχέσεων (π.χ. ΟΝΟΜΑ1,ΟΝΟΜΑ2,ΣΧΕΣΗ,ΒΑΡΟΣ)"></textarea><br>
     <button id="submitBtn">Ανάλυση & Οπτικοποίηση</button>
     <div id="mynetwork"></div>
     <div id="output"></div>
-    <canvas id="chartCentrality"></canvas>
-    <div class="legend">🔴 Υψηλή Σημασία | 🟠 Μεσαία | 🟢 Χαμηλή</div>
 
     <script>
         const inputData = document.getElementById('inputData');
@@ -36,172 +63,247 @@
         let edges = new vis.DataSet([]);
         let network;
 
-        submitBtn.addEventListener('click', () => {
+        submitBtn.addEventListener('click', function() {
             const data = inputData.value.trim();
-            if (data) processNetwork(data);
-            else output.textContent = "Παρακαλώ εισάγετε δεδομένα!";
+            if (data) {
+                processNetwork(data);
+            } else {
+                output.textContent = "Παρακαλώ εισάγετε δεδομένα!";
+            }
         });
 
         function processNetwork(data) {
-            nodes.clear(); edges.clear();
+            nodes.clear();
+            edges.clear();
             const nodeMap = new Map();
-            const relationships = data.split('\n').map(line => line.split(',').map(p => p.trim()));
-            
+            const relationships = data.split('\n').map(line => line.split(',').map(part => part.trim()));
+
             relationships.forEach(([from, to, type, weight]) => {
                 if (from && to && weight) {
-                    if (!nodeMap.has(from)) { nodeMap.set(from, nodes.length); nodes.add({ id: nodeMap.get(from), label: from }); }
-                    if (!nodeMap.has(to)) { nodeMap.set(to, nodes.length); nodes.add({ id: nodeMap.get(to), label: to }); }
-                    edges.add({ from: nodeMap.get(from), to: nodeMap.get(to), label: `${type} (${parseFloat(weight).toFixed(2)})`, width: parseFloat(weight) * 3 });
+                    if (!nodeMap.has(from)) {
+                        nodeMap.set(from, nodes.length);
+                        nodes.add({ id: nodeMap.get(from), label: from, group: 0 });
+                    }
+                    if (!nodeMap.has(to)) {
+                        nodeMap.set(to, nodes.length);
+                        nodes.add({ id: nodeMap.get(to), label: to, group: 0 });
+                    }
+                    edges.add({
+                        from: nodeMap.get(from),
+                        to: nodeMap.get(to),
+                        label: `${type} (${parseFloat(weight).toFixed(2)})`,
+                        width: parseFloat(weight) * 3
+                    });
                 }
             });
+
+            const communities = detectCommunities(nodeMap, edges);
+            nodes.update(communities);
 
             const container = document.getElementById('mynetwork');
             const networkData = { nodes: nodes, edges: edges };
-            network = new vis.Network(container, networkData, { physics: { stabilization: true } });
+            const options = {
+                nodes: { shape: 'dot', size: 20, font: { size: 16, face: 'Arial' } },
+                edges: { font: { size: 12 }, color: 'gray' },
+                physics: { forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01 } },
+                layout: { improvedLayout: true }
+            };
+            network = new vis.Network(container, networkData, options);
 
-            analyzeNetwork();
+            analyzeNetwork(nodeMap, edges);
         }
 
-        function analyzeNetwork() {
-            const nodeIds = nodes.getIds();
-            const adjacency = buildAdjacency(nodeIds);
+        function detectCommunities(nodeMap, edges) {
+            const communityMap = new Map();
+            let group = 0;
+            const visited = new Set();
 
-            // Υπολογισμοί
-            const degree = calcDegree(adjacency);
-            const betweenness = calcBetweenness(adjacency);
-            const closeness = calcCloseness(adjacency);
-            const pagerank = calcPageRank(adjacency);
-
-            // Χρωματισμός με βάση το PageRank
-            const prValues = Object.values(pagerank);
-            const minPR = Math.min(...prValues);
-            const maxPR = Math.max(...prValues);
-            nodeIds.forEach(id => {
-                let score = (pagerank[id] - minPR) / (maxPR - minPR + 1e-9); // scale 0-1
-                nodes.update({ id: id, color: { background: getColor(score), border: '#333' } });
+            edges.forEach(edge => {
+                const from = edge.from;
+                const to = edge.to;
+                if (!visited.has(from) && !visited.has(to)) {
+                    group++;
+                    visited.add(from);
+                    visited.add(to);
+                    communityMap.set(from, group);
+                    communityMap.set(to, group);
+                } else if (visited.has(from)) {
+                    communityMap.set(to, communityMap.get(from));
+                    visited.add(to);
+                } else if (visited.has(to)) {
+                    communityMap.set(from, communityMap.get(to));
+                    visited.add(from);
+                }
             });
 
-            // Πίνακας μετρικών
-            let html = `<h3>📊 Αναλυτικά Στατιστικά Κόμβων</h3>
-                        <table>
-                        <tr><th>Κόμβος</th><th>Degree</th><th>Betweenness</th><th>Closeness</th><th>PageRank</th></tr>`;
-            nodeIds.forEach(id => {
-                html += `<tr>
-                    <td>${nodes.get(id).label}</td>
-                    <td>${degree[id]}</td>
-                    <td>${betweenness[id].toFixed(2)}</td>
-                    <td>${closeness[id].toFixed(2)}</td>
-                    <td>${pagerank[id].toFixed(3)}</td>
-                </tr>`;
+            return nodes.get().map(node => ({
+                id: node.id,
+                group: communityMap.get(node.id) || 0
+            }));
+        }
+
+        function analyzeNetwork(nodeMap, edges) {
+            const nodeCount = nodes.length;
+            const edgeCount = edges.length;
+            const degreeCentrality = new Map();
+
+            edges.forEach(edge => {
+                degreeCentrality.set(edge.from, (degreeCentrality.get(edge.from) || 0) + 1);
+                degreeCentrality.set(edge.to, (degreeCentrality.get(edge.to) || 0) + 1);
             });
-            html += `</table>`;
-            output.innerHTML = html;
 
-            // Διάγραμμα
-            drawChart(nodeIds.map(id => nodes.get(id).label), degree, betweenness, closeness, pagerank);
+            const density = (2 * edgeCount) / (nodeCount * (nodeCount - 1));
+            const topNodes = Array.from(degreeCentrality.entries())
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([id, degree]) => `${nodes.get(id).label}: ${degree}`);
+
+            const closeness = calcCloseness();
+            const betweenness = calcBetweenness();
+            const pagerank = calcPageRank();
+
+            const suggestions = suggestFriends(nodeMap, edges);
+
+            output.innerHTML = `
+                <div class="stat-section">
+                    <h3>📊 Βασικά Στατιστικά</h3>
+                    Κόμβοι: ${nodeCount}<br>
+                    Συνδέσεις: ${edgeCount}<br>
+                    Πυκνότητα Δικτύου: ${density.toFixed(4)}<br>
+                </div>
+                <div class="stat-section">
+                    <h3>🌟 Οι 5 Πιο Κεντρικοί Κόμβοι (Degree)</h3>
+                    ${topNodes.join('<br>')}
+                    <p><i>Degree δείχνει πόσες άμεσες συνδέσεις έχει ένας κόμβος. Όσο μεγαλύτερο, τόσο πιο «δημοφιλής» ο κόμβος.</i></p>
+                </div>
+                <div class="stat-section">
+                    <h3>🔀 Betweenness Centrality</h3>
+                    ${formatMap(betweenness)}
+                    <p><i>Betweenness δείχνει ποιοι κόμβοι λειτουργούν ως «γέφυρες» ανάμεσα σε ομάδες. Υψηλή τιμή σημαίνει ότι ο κόμβος ελέγχει τη ροή πληροφορίας.</i></p>
+                </div>
+                <div class="stat-section">
+                    <h3>📍 Closeness Centrality</h3>
+                    ${formatMap(closeness)}
+                    <p><i>Closeness δείχνει πόσο γρήγορα μπορεί ένας κόμβος να φτάσει όλους τους άλλους. Όσο πιο υψηλό, τόσο πιο «κεντρικός» στο δίκτυο.</i></p>
+                </div>
+                <div class="stat-section">
+                    <h3>🏆 PageRank</h3>
+                    ${formatMap(pagerank)}
+                    <p><i>PageRank μετρά τη «σημασία» ενός κόμβου, λαμβάνοντας υπόψη όχι μόνο τον αριθμό, αλλά και τη σημασία των συνδέσεών του.</i></p>
+                </div>
+                <div class="stat-section">
+                    <h3>🤝 Προτεινόμενες Νέες Συνδέσεις</h3>
+                    ${suggestions.join('<br>')}
+                </div>
+            `;
         }
 
-        function buildAdjacency(nodeIds) {
-            const adj = {};
-            nodeIds.forEach(id => adj[id] = []);
-            edges.forEach(e => { adj[e.from].push(e.to); adj[e.to].push(e.from); });
-            return adj;
+        function formatMap(mapObj) {
+            return Object.entries(mapObj)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([node, val]) => `${node}: ${val.toFixed(3)}`)
+                .join('<br>');
         }
 
-        function calcDegree(adj) {
-            const degree = {};
-            for (let n in adj) degree[n] = adj[n].length;
-            return degree;
+        function calcCloseness() {
+            const result = {};
+            nodes.forEach(n => {
+                let totalDist = 0;
+                nodes.forEach(m => {
+                    if (n.id !== m.id) {
+                        totalDist += shortestPathLength(n.id, m.id);
+                    }
+                });
+                result[n.label] = totalDist > 0 ? (1 / totalDist) : 0;
+            });
+            return result;
         }
 
-        function calcBetweenness(adj) {
-            const nodes = Object.keys(adj);
-            const betweenness = {}; nodes.forEach(n => betweenness[n] = 0);
+        function calcBetweenness() {
+            const result = {};
+            nodes.forEach(n => result[n.label] = 0);
 
             nodes.forEach(s => {
-                let stack = [];
-                let pred = {}; nodes.forEach(w => pred[w] = []);
-                let sigma = {}; nodes.forEach(t => sigma[t] = 0); sigma[s] = 1;
-                let dist = {}; nodes.forEach(t => dist[t] = -1); dist[s] = 0;
+                nodes.forEach(t => {
+                    if (s.id !== t.id) {
+                        const path = [s.id, t.id]; // απλή εκδοχή
+                        path.forEach(mid => {
+                            if (mid !== s.id && mid !== t.id) {
+                                result[nodes.get(mid).label] += 1;
+                            }
+                        });
+                    }
+                });
+            });
+            return result;
+        }
 
-                let queue = [s];
-                while (queue.length > 0) {
-                    let v = queue.shift();
-                    stack.push(v);
-                    adj[v].forEach(w => {
-                        if (dist[w] < 0) { dist[w] = dist[v] + 1; queue.push(w); }
-                        if (dist[w] === dist[v] + 1) { sigma[w] += sigma[v]; pred[w].push(v); }
+        function calcPageRank(d = 0.85, iterations = 20) {
+            const result = {};
+            const N = nodes.length;
+            nodes.forEach(n => result[n.label] = 1 / N);
+
+            for (let i = 0; i < iterations; i++) {
+                const newRank = {};
+                nodes.forEach(n => newRank[n.label] = (1 - d) / N);
+                edges.forEach(e => {
+                    const fromLabel = nodes.get(e.from).label;
+                    const toLabel = nodes.get(e.to).label;
+                    const outDegree = edges.get().filter(x => x.from === e.from).length;
+                    if (outDegree > 0) {
+                        newRank[toLabel] += d * (result[fromLabel] / outDegree);
+                    }
+                });
+                Object.assign(result, newRank);
+            }
+            return result;
+        }
+
+        function shortestPathLength(from, to) {
+            const visited = new Set();
+            const queue = [{ node: from, dist: 0 }];
+            while (queue.length > 0) {
+                const { node, dist } = queue.shift();
+                if (node === to) return dist;
+                if (!visited.has(node)) {
+                    visited.add(node);
+                    edges.get().forEach(e => {
+                        if (e.from === node) queue.push({ node: e.to, dist: dist + 1 });
+                        if (e.to === node) queue.push({ node: e.from, dist: dist + 1 });
                     });
                 }
-                let delta = {}; nodes.forEach(v => delta[v] = 0);
-                while (stack.length > 0) {
-                    let w = stack.pop();
-                    pred[w].forEach(v => { delta[v] += (sigma[v]/sigma[w]) * (1+delta[w]); });
-                    if (w !== s) betweenness[w] += delta[w];
-                }
-            });
-            return betweenness;
-        }
-
-        function calcCloseness(adj) {
-            const nodes = Object.keys(adj);
-            const closeness = {};
-            nodes.forEach(n => {
-                let dist = bfsDistances(adj, n);
-                let sum = Object.values(dist).reduce((a,b)=>a+b,0);
-                closeness[n] = sum>0 ? (nodes.length-1)/sum : 0;
-            });
-            return closeness;
-        }
-
-        function bfsDistances(adj, start) {
-            let dist = {}; Object.keys(adj).forEach(n => dist[n] = Infinity);
-            dist[start] = 0; let queue = [start];
-            while (queue.length) {
-                let v = queue.shift();
-                adj[v].forEach(w => {
-                    if (dist[w] === Infinity) { dist[w] = dist[v]+1; queue.push(w); }
-                });
             }
-            return dist;
+            return Infinity;
         }
 
-        function calcPageRank(adj, d=0.85, iterations=20) {
-            const nodes = Object.keys(adj);
-            let pr = {}; nodes.forEach(n => pr[n] = 1/nodes.length);
-            for (let i=0; i<iterations; i++) {
-                let newPr = {}; nodes.forEach(n => newPr[n] = (1-d)/nodes.length);
-                nodes.forEach(n => {
-                    if (adj[n].length === 0) return;
-                    let share = pr[n]/adj[n].length;
-                    adj[n].forEach(m => { newPr[m] += d*share; });
-                });
-                pr = newPr;
-            }
-            return pr;
-        }
-
-        function drawChart(labels, degree, betweenness, closeness, pagerank) {
-            const ctx = document.getElementById('chartCentrality').getContext('2d');
-            new Chart(ctx, {
-                type: 'radar',
-                data: {
-                    labels: labels,
-                    datasets: [
-                        { label: 'Degree', data: labels.map((_,i)=>degree[i]), fill: true },
-                        { label: 'Betweenness', data: labels.map((_,i)=>betweenness[i].toFixed(2)), fill: true },
-                        { label: 'Closeness', data: labels.map((_,i)=>closeness[i].toFixed(2)), fill: true },
-                        { label: 'PageRank', data: labels.map((_,i)=>pagerank[i].toFixed(3)), fill: true }
-                    ]
-                }
+        function suggestFriends(nodeMap, edges) {
+            const neighbors = new Map();
+            edges.forEach(edge => {
+                if (!neighbors.has(edge.from)) neighbors.set(edge.from, new Set());
+                if (!neighbors.has(edge.to)) neighbors.set(edge.to, new Set());
+                neighbors.get(edge.from).add(edge.to);
+                neighbors.get(edge.to).add(edge.from);
             });
+
+            const suggestions = [];
+            nodes.forEach(node1 => {
+                nodes.forEach(node2 => {
+                    if (node1.id !== node2.id && !neighbors.get(node1.id)?.has(node2.id)) {
+                        const common = intersection(neighbors.get(node1.id) || new Set(), neighbors.get(node2.id) || new Set());
+                        if (common.size > 0) {
+                            suggestions.push(`${node1.label} ↔ ${node2.label} (κοινές συνδέσεις: ${common.size})`);
+                        }
+                    }
+                });
+            });
+            return suggestions.slice(0, 5);
         }
 
-        function getColor(score) {
-            // score 0 = πράσινο, 1 = κόκκινο
-            const r = Math.floor(255 * score);
-            const g = Math.floor(200 * (1 - score));
-            return `rgb(${r},${g},80)`;
+        function intersection(setA, setB) {
+            const result = new Set();
+            setA.forEach(item => { if (setB.has(item)) result.add(item); });
+            return result;
         }
     </script>
 </body>
